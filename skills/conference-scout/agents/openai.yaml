@@ -1,0 +1,8 @@
+interface:
+  display_name: "Conference Scout"
+  short_description: "Find speaking opportunities by keyword"
+  default_prompt: "Use $conference-scout to find conferences accepting speakers for my keywords."
+
+policy:
+  allow_implicit_invocation: true
+

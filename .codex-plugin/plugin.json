@@ -1,0 +1,22 @@
+{
+  "name": "conference-scout-mcp",
+  "version": "0.1.0",
+  "description": "Search for conferences and calls for speakers using explicit keywords.",
+  "author": {
+    "name": "SpeakerAgent.ai"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Conference Scout",
+    "shortDescription": "Find speaking opportunities by keyword.",
+    "longDescription": "Runs standalone keyword-driven searches for conferences, CFP deadlines, submission pages, and public contacts.",
+    "developerName": "SpeakerAgent.ai",
+    "category": "Research",
+    "capabilities": ["Research", "Search"],
+    "defaultPrompt": [
+      "Find healthcare AI conferences accepting speakers.",
+      "Search for leadership CFPs in Europe."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

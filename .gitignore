@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.env
+.pytest_cache/
+.pytest-tmp/
+.ruff_cache/
+.venv/
+build/
+dist/
+conference-scout.db*

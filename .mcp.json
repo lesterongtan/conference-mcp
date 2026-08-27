@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "conference-scout": {
+      "command": "conference-scout-mcp",
+      "args": ["--transport", "stdio"]
+    }
+  }
+}
