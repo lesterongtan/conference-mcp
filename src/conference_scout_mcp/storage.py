@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +182,15 @@ class SearchStore:
         self.engine: Engine = create_engine(url, pool_pre_ping=True)
         if self.engine.dialect.name == "sqlite":
             event.listen(self.engine, "connect", self._enable_sqlite_foreign_keys)
+        elif self.engine.dialect.name == "postgresql":
+            event.listen(
+                self.engine,
+                "connect",
+                partial(
+                    self._set_postgres_schema,
+                    schema=self.settings.validated_database_schema,
+                ),
+            )
         legacy_schema = self._prepare_legacy_sqlite()
         if self.settings.auto_create_schema:
             metadata.create_all(self.engine)
@@ -202,6 +212,18 @@ class SearchStore:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+    @staticmethod
+    def _set_postgres_schema(dbapi_connection: Any, _: Any, *, schema: str) -> None:
+        previous_autocommit = dbapi_connection.autocommit
+        try:
+            dbapi_connection.autocommit = True
+            cursor = dbapi_connection.cursor()
+            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+            cursor.execute(f'SET search_path TO "{schema}", public')
+            cursor.close()
+        finally:
+            dbapi_connection.autocommit = previous_autocommit
 
     def _prepare_legacy_sqlite(self) -> bool:
         """Move the v0.1 payload tables aside so their rows can be preserved."""

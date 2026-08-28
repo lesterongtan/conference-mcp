@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -12,6 +13,7 @@ def _bool(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     database_url: str = os.getenv("CONFERENCE_SCOUT_DATABASE_URL", "")
+    database_schema: str = os.getenv("CONFERENCE_SCOUT_DATABASE_SCHEMA", "conference_scout")
     auto_create_schema: bool = _bool("CONFERENCE_SCOUT_AUTO_CREATE_SCHEMA", True)
     sqlite_path: str = os.getenv("CONFERENCE_SCOUT_DB", "conference-scout.db")
     require_auth: bool = _bool("CONFERENCE_SCOUT_REQUIRE_AUTH")
@@ -56,3 +58,10 @@ class Settings:
             return self.database_url
         normalized = self.sqlite_path.replace("\\", "/")
         return f"sqlite:///{normalized}"
+
+    @property
+    def validated_database_schema(self) -> str:
+        value = self.database_schema.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", value):
+            raise ValueError("CONFERENCE_SCOUT_DATABASE_SCHEMA is not a valid PostgreSQL schema")
+        return value

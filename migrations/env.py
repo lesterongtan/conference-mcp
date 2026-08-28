@@ -28,6 +28,10 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     connectable = create_engine(Settings().storage_url, poolclass=pool.NullPool)
     with connectable.connect() as connection:
+        if connection.dialect.name == "postgresql":
+            schema = Settings().validated_database_schema
+            connection.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+            connection.exec_driver_sql(f'SET search_path TO "{schema}", public')
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()

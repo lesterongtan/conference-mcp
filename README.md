@@ -101,6 +101,7 @@ ruff check .
 - Set `CONFERENCE_SCOUT_REQUIRE_AUTH=true`, a long bootstrap key, and a separate pepper.
 - Set `CONFERENCE_SCOUT_PUBLIC_URL` to the externally visible HTTPS origin. Hosted startup fails closed when it is left at the loopback default.
 - Set `CONFERENCE_SCOUT_DATABASE_URL` to PostgreSQL and disable automatic schema creation after migrations are installed.
+- Conference Scout uses the isolated `conference_scout` PostgreSQL schema by default, avoiding collisions with existing Supabase tables.
 - Keep provider credentials on the server. Customers receive Conference Scout credentials only.
 - Restrict outbound traffic at the container or network layer to public internet destinations and the configured provider APIs. Application URL checks are defense in depth, not a replacement for an egress firewall.
 - Use the owned `CONTACT_FINDER_*` integration as the primary browser automation path.
