@@ -21,9 +21,7 @@ def _identity(conference: Conference) -> str:
 
 
 def _score(conference: Conference, options: SearchOptions) -> float:
-    haystack = " ".join(
-        (conference.name, conference.description, conference.location)
-    ).casefold()
+    haystack = " ".join((conference.name, conference.description, conference.location)).casefold()
     conference.matched_keywords = [
         keyword for keyword in options.keywords if keyword.casefold() in haystack
     ]
@@ -54,8 +52,7 @@ class DiscoveryEngine:
         discovered: list[Conference] = []
         with ThreadPoolExecutor(max_workers=max(1, len(self.providers))) as executor:
             futures = {
-                executor.submit(provider.discover, options): provider
-                for provider in self.providers
+                executor.submit(provider.discover, options): provider for provider in self.providers
             }
             for future in as_completed(futures):
                 provider = futures[future]

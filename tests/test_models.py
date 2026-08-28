@@ -24,4 +24,3 @@ def test_date_window_filters_known_dates() -> None:
     options = SearchOptions.create(["AI"], min_days_out=10, max_days_out=20)
     result = Conference(name="Example", url="https://example.com", event_date="2026-01-31")
     assert result.date_in_window(options, today=date(2026, 1, 1)) is False
-

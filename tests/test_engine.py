@@ -35,4 +35,3 @@ def test_open_cfp_filter() -> None:
     options = SearchOptions.create(["AI"], open_cfp_only=True)
     results = DiscoveryEngine([FakeProvider()]).search(options)
     assert all(result.cfp_status == "Open" for result in results)
-

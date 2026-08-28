@@ -1,7 +1,7 @@
 {
   "name": "conference-scout-mcp",
-  "version": "0.1.0",
-  "description": "Search for conferences and calls for speakers using explicit keywords.",
+  "version": "0.2.0",
+  "description": "Search conferences, CFPs, and public organizer contacts using explicit keywords.",
   "author": {
     "name": "SpeakerAgent.ai"
   }

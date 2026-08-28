@@ -4,17 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "conference-scout-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Standalone keyword-driven conference and CFP discovery MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "SpeakerAgent.ai" }]
 dependencies = [
+  "alembic>=1.14,<2",
   "beautifulsoup4>=4.12,<5",
+  "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "mcp>=1.13,<2",
+  "psycopg[binary]>=3.2,<4",
   "python-dateutil>=2.9,<3",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.30,<1",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +32,9 @@ dev = [
 
 [project.scripts]
 conference-scout-mcp = "conference_scout_mcp.server:main"
+conference-scout-api = "conference_scout_mcp.api:main"
+conference-scout-worker = "conference_scout_mcp.worker:main"
+conference-scout-admin = "conference_scout_mcp.admin:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/conference_scout_mcp"]
@@ -40,4 +48,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-

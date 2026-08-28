@@ -25,9 +25,7 @@ def test_confs_tech_provider_maps_structured_fields() -> None:
             ],
         )
     )
-    respx.get(f"{provider.base_url}/2027/python.json").mock(
-        return_value=httpx.Response(404)
-    )
+    respx.get(f"{provider.base_url}/2027/python.json").mock(return_value=httpx.Response(404))
 
     results = provider.discover(SearchOptions.create(["python"]))
 
@@ -64,4 +62,3 @@ def test_scrape_conference_extracts_jsonld_and_cfp_link() -> None:
     assert result.cfp_status == "Open"
     assert result.submission_url == "https://example.org/speakers/apply"
     assert result.contact_email == "program@example.org"
-

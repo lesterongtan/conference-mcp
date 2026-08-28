@@ -5,6 +5,7 @@ import logging
 import os
 import re
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlparse
@@ -13,7 +14,9 @@ import httpx
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 
+from .config import Settings
 from .models import Conference, SearchOptions
+from .safe_http import fetch_public_text
 
 logger = logging.getLogger(__name__)
 
@@ -114,22 +117,18 @@ CFP_OPEN_RE = re.compile(
 
 def scrape_conference(url: str, source: str = "web_search") -> Conference | None:
     try:
-        with httpx.Client(
+        page_text, final_url, content_type = fetch_public_text(
+            url,
             timeout=HTTP_TIMEOUT,
-            follow_redirects=True,
             headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"},
-        ) as client:
-            response = client.get(url)
-            response.raise_for_status()
+        )
     except (httpx.HTTPError, ValueError) as exc:
         logger.info("Could not fetch %s: %s", url, exc)
         return None
 
-    content_type = response.headers.get("content-type", "")
     if "html" not in content_type.casefold():
         return None
-    final_url = str(response.url)
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(page_text, "html.parser")
     event_node: dict[str, Any] = {}
     for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
         try:
@@ -209,14 +208,31 @@ def scrape_conference(url: str, source: str = "web_search") -> Conference | None
 
 class ConfsTechProvider:
     name = "confs.tech"
-    base_url = (
-        "https://raw.githubusercontent.com/tech-conferences/"
-        "conference-data/main/conferences"
-    )
+    base_url = "https://raw.githubusercontent.com/tech-conferences/conference-data/main/conferences"
     topics = {
-        "android", "css", "data", "devops", "dotnet", "elixir", "general", "golang",
-        "graphql", "ios", "java", "javascript", "kotlin", "leadership", "php", "python",
-        "ruby", "rust", "scala", "security", "tech-comm", "typescript", "ux",
+        "android",
+        "css",
+        "data",
+        "devops",
+        "dotnet",
+        "elixir",
+        "general",
+        "golang",
+        "graphql",
+        "ios",
+        "java",
+        "javascript",
+        "kotlin",
+        "leadership",
+        "php",
+        "python",
+        "ruby",
+        "rust",
+        "scala",
+        "security",
+        "tech-comm",
+        "typescript",
+        "ux",
     }
     aliases = {
         "ai": "data",
@@ -306,7 +322,7 @@ class SerperProvider:
                 queries = (
                     f'{keyword} "call for speakers" conference{geography} {year}',
                     f'{keyword} "call for proposals" summit{geography} {year}',
-                    f'{keyword} conference speakers{geography} {year + 1}',
+                    f"{keyword} conference speakers{geography} {year + 1}",
                 )
                 for query in queries:
                     try:
@@ -324,12 +340,20 @@ class SerperProvider:
                         if url.startswith(("http://", "https://")):
                             urls.append(url)
 
-        results: list[Conference] = []
-        for url in list(dict.fromkeys(urls))[: max(options.max_results * 3, 30)]:
+        settings = Settings()
+        candidates: list[str] = []
+        for url in list(dict.fromkeys(urls))[: max(1, settings.discovery_max_pages)]:
             parsed = urlparse(url)
             if parsed.path.casefold().endswith((".pdf", ".doc", ".docx", ".ppt", ".pptx")):
                 continue
-            result = scrape_conference(url, self.name)
-            if result:
-                results.append(result)
+            candidates.append(url)
+        results: list[Conference] = []
+        with ThreadPoolExecutor(
+            max_workers=max(1, min(settings.discovery_max_concurrent, 16))
+        ) as executor:
+            futures = [executor.submit(scrape_conference, url, self.name) for url in candidates]
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
         return results
