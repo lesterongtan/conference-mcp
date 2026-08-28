@@ -27,7 +27,10 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     connectable = create_engine(Settings().storage_url, poolclass=pool.NullPool)
-    with connectable.connect() as connection:
+    # The explicit outer transaction is required because setting the PostgreSQL
+    # search path starts a SQLAlchemy transaction before Alembic configures its
+    # migration context. Committing here makes transactional DDL persistent.
+    with connectable.begin() as connection:
         if connection.dialect.name == "postgresql":
             schema = Settings().validated_database_schema
             connection.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
