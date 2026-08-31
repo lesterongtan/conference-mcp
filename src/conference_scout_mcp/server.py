@@ -66,6 +66,12 @@ transport_security = TransportSecuritySettings(
 
 mcp = FastMCP(
     "Conference Scout",
+    instructions=(
+        "Search conferences from explicit user keywords. Start one search and poll its ID; "
+        "do not launch duplicate refinements while it runs. Call get_provider_status when "
+        "coverage is unexpectedly sparse. Browser Use/RTRVR are Contact Finder backends used "
+        "only by deep or tier3 contact enrichment; they do not expand conference discovery."
+    ),
     host=os.getenv("CONFERENCE_SCOUT_HTTP_HOST", "127.0.0.1"),
     port=int(os.getenv("CONFERENCE_SCOUT_HTTP_PORT", "8765")),
     streamable_http_path="/mcp",
@@ -141,6 +147,13 @@ def enrich_conference_contact(result_id: str, mode: str = "deep") -> dict[str, A
 def get_enrichment_status(job_id: str) -> dict[str, Any]:
     """Get the status of an owned contact-enrichment job."""
     return get_service().enrichment_status(job_id, current_customer_id())
+
+
+@mcp.tool()
+def get_provider_status() -> dict[str, Any]:
+    """Report active workers and configured discovery/enrichment providers without secrets."""
+    current_customer_id()
+    return get_service().provider_status()
 
 
 @mcp.tool()

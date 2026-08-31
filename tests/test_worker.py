@@ -1,3 +1,6 @@
+import httpx
+import respx
+
 from conference_scout_mcp.config import Settings
 from conference_scout_mcp.enrichment import ProviderRun
 from conference_scout_mcp.models import Conference, ContactEvidence, SearchOptions
@@ -76,3 +79,49 @@ def test_worker_retries_and_sanitizes_search_failure(tmp_path) -> None:
     assert status["status"] == "error"
     assert status["error"] == "Search processing failed"
     assert "secret" not in status["error"]
+
+
+@respx.mock
+def test_worker_heartbeat_reports_provider_configuration(tmp_path) -> None:
+    respx.get("https://contact-finder.example/health").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "service": "contact-finder",
+                "backend": "rtrvr",
+                "browser_use_configured": True,
+                "rtrvr_configured": True,
+            },
+        )
+    )
+    settings = Settings(
+        database_url="",
+        sqlite_path=str(tmp_path / "providers.db"),
+        bootstrap_customer_id="local",
+        embedded_worker=False,
+        serper_api_key="serper-key",
+        apify_api_token="apify-key",
+        apify_actor_id="zen-studio~10times-events-scraper",
+        firecrawl_api_key="firecrawl-key",
+        contact_finder_url="https://contact-finder.example",
+    )
+    store = SearchStore(tmp_path / "providers.db", settings=settings)
+    worker = ConferenceScoutWorker(
+        store=store,
+        engine=FakeEngine(),
+        settings=settings,
+        worker_id="provider-worker",
+    )
+
+    assert worker.run_once() is False
+    status = store.get_worker_provider_status()
+
+    assert status["active_workers"] == 1
+    assert status["providers"]["serper"] is True
+    assert status["providers"]["apify_directory"] is True
+    assert status["providers"]["firecrawl"] is True
+    assert status["providers"]["contact_finder"] is True
+    contact_status = status["workers"][0]["capabilities"]["contact_finder_status"]
+    assert contact_status["reachable"] is True
+    assert contact_status["backend"] == "rtrvr"

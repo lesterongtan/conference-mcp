@@ -21,7 +21,7 @@ class ConferenceScoutService:
     ) -> None:
         self.settings = settings or Settings()
         self.store = store or SearchStore(settings=self.settings)
-        self.engine = engine or DiscoveryEngine()
+        self.engine = engine or DiscoveryEngine(settings=self.settings)
         self.worker = worker or ConferenceScoutWorker(
             store=self.store, engine=self.engine, settings=self.settings
         )
@@ -117,6 +117,15 @@ class ConferenceScoutService:
         if result is None:
             raise ValueError("Enrichment job not found")
         return result
+
+    def provider_status(self) -> dict[str, Any]:
+        status = self.store.get_worker_provider_status(
+            active_seconds=max(90, self.settings.worker_heartbeat_seconds * 3)
+        )
+        status["note"] = (
+            "Provider secrets are never returned. Browser Use/RTRVR run behind Contact Finder."
+        )
+        return status
 
     def delete(self, search_id: str, customer_id: str = "local") -> dict[str, Any]:
         return {"search_id": search_id, "deleted": self.store.delete_search(search_id, customer_id)}

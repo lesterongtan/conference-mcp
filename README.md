@@ -6,6 +6,7 @@ A standalone hosted service and MCP server for keyword-driven conference, CFP, a
 
 - The free Confs.tech open-source dataset for supported technology topics
 - Google results through Serper when `SERPER_API_KEY` is configured
+- Structured event-directory results through Apify when `APIFY_API_TOKEN` is configured
 - Conference pages for structured event data, CFP links, dates, locations, and public contacts
 - Optional Firecrawl rendering and an owned contact-finder service for difficult contact searches
 
@@ -83,6 +84,7 @@ The repository also includes a Codex plugin manifest, a Claude plugin manifest, 
 - `get_conference`: returns one result with its evidence
 - `enrich_conference_contact`: queues basic, standard, deep, or tier-3 contact enrichment
 - `get_enrichment_status`: checks an enrichment job
+- `get_provider_status`: reports active workers and configured providers without returning secrets
 - `delete_search`: permanently deletes one saved run
 
 Example request:
@@ -103,6 +105,13 @@ ruff check .
 - Set `CONFERENCE_SCOUT_DATABASE_URL` to PostgreSQL and disable automatic schema creation after migrations are installed.
 - Conference Scout uses the isolated `conference_scout` PostgreSQL schema by default, avoiding collisions with existing Supabase tables.
 - Keep provider credentials on the server. Customers receive Conference Scout credentials only.
+- Put discovery and enrichment provider variables on the worker service. `get_provider_status`
+  reports the active worker configuration without exposing their values.
+- Apify uses the verified `zen-studio~10times-events-scraper` actor by default. Set
+  `APIFY_API_TOKEN`; the default total charge ceiling is `$1.00` per Conference Scout search.
+- Set `CONTACT_FINDER_URL` and `CONTACT_FINDER_TOKEN` on the worker to enable deep contact
+  enrichment. Browser Use versus RTRVR is selected inside that separate Contact Finder service;
+  its `RTRVR_API_KEY` and `RTRVR_ONLY` variables do not belong on Conference Scout itself.
 - Restrict outbound traffic at the container or network layer to public internet destinations and the configured provider APIs. Application URL checks are defense in depth, not a replacement for an egress firewall.
 - Use the owned `CONTACT_FINDER_*` integration as the primary browser automation path.
 - `CONTACT_FINDER_MAX_CONCURRENT` defaults to two and is enforced with shared database leases across worker replicas.

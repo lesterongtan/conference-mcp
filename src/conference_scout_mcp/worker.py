@@ -8,6 +8,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+
 from .config import Settings
 from .engine import DiscoveryEngine
 from .enrichment import EnrichmentRouter
@@ -28,11 +30,67 @@ class ConferenceScoutWorker:
     ) -> None:
         self.settings = settings or Settings()
         self.store = store or SearchStore(settings=self.settings)
-        self.engine = engine or DiscoveryEngine()
+        self.engine = engine or DiscoveryEngine(settings=self.settings)
         self.enricher = enricher or EnrichmentRouter()
         self.worker_id = worker_id or f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        self._last_heartbeat = 0.0
+
+    def _provider_capabilities(self) -> dict[str, Any]:
+        contact_finder_status: dict[str, Any] = {
+            "configured": bool(self.settings.contact_finder_url),
+            "reachable": False,
+        }
+        if self.settings.contact_finder_url:
+            try:
+                headers = {}
+                if self.settings.contact_finder_token:
+                    headers["Authorization"] = f"Bearer {self.settings.contact_finder_token}"
+                response = httpx.get(
+                    f"{self.settings.contact_finder_url.rstrip('/')}/health",
+                    headers=headers,
+                    timeout=5,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                contact_finder_status.update(
+                    {
+                        "reachable": bool(payload.get("ok")),
+                        "service": str(payload.get("service") or "")[:100],
+                        "backend": str(payload.get("backend") or "unknown")[:100],
+                        "browser_use_configured": payload.get("browser_use_configured"),
+                        "rtrvr_configured": payload.get("rtrvr_configured"),
+                    }
+                )
+            except (httpx.HTTPError, ValueError):
+                contact_finder_status["reachable"] = False
+        return {
+            "discovery": {
+                "confs_tech": True,
+                "serper": bool(self.settings.serper_api_key),
+                "apify_directory": bool(
+                    self.settings.apify_api_token and self.settings.apify_actor_id
+                ),
+            },
+            "enrichment": {
+                "direct_page": True,
+                "firecrawl": bool(self.settings.firecrawl_api_key),
+                "contact_finder": bool(self.settings.contact_finder_url),
+            },
+            "contact_finder_status": contact_finder_status,
+            "contact_finder_note": (
+                "Browser Use/RTRVR selection is managed by the external Contact Finder service."
+            ),
+        }
+
+    def _heartbeat_if_due(self) -> None:
+        now = time.monotonic()
+        if now - self._last_heartbeat < max(5, self.settings.worker_heartbeat_seconds):
+            return
+        self.store.record_worker_heartbeat(self.worker_id, self._provider_capabilities())
+        self._last_heartbeat = now
 
     def run_once(self) -> bool:
+        self._heartbeat_if_due()
         search = self.store.claim_search(self.worker_id, self.settings.worker_lease_seconds)
         if search:
             self._run_search(search)
@@ -82,10 +140,12 @@ class ConferenceScoutWorker:
                 job["customer_id"], "contact_enrichment", start_of_day
             )
             remaining = max(0, self.settings.enrichment_daily_limit - used)
+            diagnostic_warnings = getattr(self.engine, "diagnostic_warnings", lambda: [])()
             self.store.complete(
                 job["search_id"],
                 results,
                 job["customer_id"],
+                warnings=diagnostic_warnings,
                 auto_enrichment_mode=options.enrichment_mode,
                 max_enrichments=min(options.max_enrichments, remaining),
                 worker_id=self.worker_id,

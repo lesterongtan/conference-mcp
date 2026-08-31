@@ -64,7 +64,7 @@ async def lifespan(_: FastAPI):
         yield
 
 
-app = FastAPI(title="Conference Scout API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Conference Scout API", version="0.3.0", lifespan=lifespan)
 origins = [value.strip() for value in settings.cors_origins.split(",") if value.strip()]
 if origins:
     app.add_middleware(
@@ -78,7 +78,7 @@ if origins:
 
 @app.get("/healthz")
 def health() -> dict[str, Any]:
-    return {"ok": True, "service": "conference-scout", "version": "0.2.0"}
+    return {"ok": True, "service": "conference-scout", "version": "0.3.0"}
 
 
 @app.get("/readyz")
@@ -161,6 +161,14 @@ def enrichment_status(
         return get_service().enrichment_status(job_id, customer_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/providers/status")
+def provider_status(
+    customer_id: Annotated[str, Depends(customer_id_for_request)],
+) -> dict[str, Any]:
+    del customer_id
+    return get_service().provider_status()
 
 
 @app.delete("/v1/searches/{search_id}")

@@ -38,6 +38,9 @@ def test_rest_search_lifecycle(monkeypatch, tmp_path) -> None:
         assert status.json()["status"] == "completed"
         results = client.get(f"/v1/searches/{search_id}/results").json()
         assert results["results_count"] == 1
+        providers = client.get("/v1/providers/status")
+        assert providers.status_code == 200
+        assert providers.json()["providers"]["confs_tech"] is True
         result_id = results["results"][0]["id"]
         assert client.get(f"/v1/conferences/{result_id}").json()["name"] == "AI Summit"
 

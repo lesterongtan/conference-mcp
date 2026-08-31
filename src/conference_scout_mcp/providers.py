@@ -4,9 +4,10 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlparse
 
@@ -29,6 +30,7 @@ HTTP_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
 
 class DiscoveryProvider(Protocol):
     name: str
+    configured: bool
 
     def discover(self, options: SearchOptions) -> list[Conference]: ...
 
@@ -208,6 +210,7 @@ def scrape_conference(url: str, source: str = "web_search") -> Conference | None
 
 class ConfsTechProvider:
     name = "confs.tech"
+    configured = True
     base_url = "https://raw.githubusercontent.com/tech-conferences/conference-data/main/conferences"
     topics = {
         "android",
@@ -305,11 +308,246 @@ class ConfsTechProvider:
         return results
 
 
+TENTIMES_ACTOR_ID = "zen-studio~10times-events-scraper"
+TENTIMES_CATEGORY_BY_KEYWORD = {
+    "healthcare": "27",
+    "health": "27",
+    "medical": "27",
+    "medicine": "27",
+    "pharma": "27",
+    "pharmaceutical": "27",
+    "hospital": "27",
+    "clinical": "27",
+    "nursing": "27",
+    "biotech": "53",
+    "biotechnology": "53",
+    "science": "53",
+    "research": "53",
+    "finance": "146",
+    "financial": "146",
+    "banking": "146",
+    "fintech": "146",
+    "security": "150",
+    "cybersecurity": "150",
+    "education": "61",
+    "training": "61",
+    "technology": "156",
+    "tech": "156",
+    "software": "156",
+    "cloud": "156",
+    "ai": "156",
+}
+COUNTRY_CODES = {
+    "united states": "US",
+    "united states of america": "US",
+    "usa": "US",
+    "u.s.a.": "US",
+    "us": "US",
+    "u.s.": "US",
+    "canada": "CA",
+    "united kingdom": "GB",
+    "uk": "GB",
+    "great britain": "GB",
+    "australia": "AU",
+    "singapore": "SG",
+    "germany": "DE",
+    "france": "FR",
+    "italy": "IT",
+    "spain": "ES",
+    "netherlands": "NL",
+}
+
+
+def _tentimes_category(keyword: str) -> str:
+    categories = [
+        TENTIMES_CATEGORY_BY_KEYWORD[word]
+        for word in re.findall(r"[a-zA-Z]+", keyword.casefold())
+        if word in TENTIMES_CATEGORY_BY_KEYWORD
+    ]
+    if not categories:
+        return ""
+    # A domain category is more useful than generic IT for mixed phrases such as
+    # "AI in healthcare" or "AI fintech".
+    return next((value for value in categories if value != "156"), categories[0])
+
+
+def _apify_country(geography: str) -> str:
+    return COUNTRY_CODES.get(geography.casefold().strip(), "WW")
+
+
+class ApifyDirectoryProvider:
+    """Discover structured events through a bounded Apify directory actor."""
+
+    name = "apify_directory"
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or Settings()
+        self.api_token = self.settings.apify_api_token
+        self.actor_id = self.settings.apify_actor_id
+        self.configured = bool(self.api_token and self.actor_id)
+
+    def _input(self, keyword: str, options: SearchOptions) -> dict[str, Any]:
+        if self.actor_id == TENTIMES_ACTOR_ID:
+            category = _tentimes_category(keyword)
+            value: dict[str, Any] = {
+                "category": category,
+                "country": _apify_country(options.geography),
+                "eventType": "conference",
+                "startDate": (date.today() + timedelta(days=options.min_days_out)).isoformat(),
+                "endDate": (date.today() + timedelta(days=options.max_days_out)).isoformat(),
+                "maxItems": max(10, options.max_results),
+                "onlineOnly": False,
+                "scrapeDetails": False,
+            }
+            if not category:
+                value["query"] = keyword
+            return value
+        if not self.settings.apify_input_template:
+            raise ValueError(
+                "CFP_DIRECTORY_APIFY_INPUT_TEMPLATE is required for a non-default actor"
+            )
+        rendered = self.settings.apify_input_template.replace("{keyword}", keyword).replace(
+            "{geography}", options.geography
+        )
+        parsed = json.loads(rendered)
+        if not isinstance(parsed, dict):
+            raise ValueError("CFP_DIRECTORY_APIFY_INPUT_TEMPLATE must produce a JSON object")
+        return parsed
+
+    def _run_actor(self, run_input: dict[str, Any], charge_limit: float) -> list[dict]:
+        headers = {"Authorization": f"Bearer {self.api_token}"}
+        with httpx.Client(timeout=httpx.Timeout(70.0, connect=10.0), headers=headers) as client:
+            response = client.post(
+                f"https://api.apify.com/v2/acts/{self.actor_id}/runs",
+                params={"waitForFinish": 60, "maxTotalChargeUsd": charge_limit},
+                json=run_input,
+            )
+            response.raise_for_status()
+            run = response.json().get("data", {})
+            run_id = str(run.get("id") or "")
+            status = str(run.get("status") or "")
+            deadline = time.monotonic() + max(30, self.settings.apify_max_poll_seconds)
+            while run_id and status not in {"SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"}:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Apify actor did not complete before its deadline")
+                time.sleep(5)
+                poll = client.get(f"https://api.apify.com/v2/actor-runs/{run_id}", timeout=30)
+                poll.raise_for_status()
+                run = poll.json().get("data", {})
+                status = str(run.get("status") or "")
+            if status != "SUCCEEDED":
+                raise RuntimeError(f"Apify actor finished with status {status or 'unknown'}")
+            dataset_id = str(run.get("defaultDatasetId") or "")
+            if not dataset_id:
+                raise RuntimeError("Apify actor response did not include a dataset")
+            items = client.get(
+                f"https://api.apify.com/v2/datasets/{dataset_id}/items", timeout=30
+            )
+            items.raise_for_status()
+            payload = items.json()
+            if not isinstance(payload, list):
+                raise ValueError("Apify dataset response was not a list")
+            return [item for item in payload if isinstance(item, dict)]
+
+    @staticmethod
+    def _normalize(item: dict[str, Any]) -> Conference | None:
+        name = _string(item.get("name") or item.get("title") or item.get("eventName"))
+        raw_url = _string(
+            item.get("website") or item.get("url") or item.get("link") or item.get("eventUrl")
+        )
+        if not name or not raw_url:
+            return None
+        url = raw_url if raw_url.startswith(("http://", "https://")) else f"https://{raw_url}"
+        raw_location = item.get("location")
+        if isinstance(raw_location, dict):
+            location = ", ".join(
+                dict.fromkeys(
+                    filter(
+                        None,
+                        (
+                            _string(raw_location.get("venueName")),
+                            _string(raw_location.get("cityName")),
+                            _string(raw_location.get("state")),
+                            _string(raw_location.get("countryName")),
+                        ),
+                    )
+                )
+            )
+        else:
+            location = _string(raw_location or item.get("venue"))
+        source_url = _string(item.get("url")) or url
+        return Conference(
+            name=name[:300],
+            url=url,
+            description=_string(item.get("description"))[:1000],
+            location=location[:300],
+            event_date=_iso_date(item.get("startDate") or item.get("date")),
+            event_end_date=_iso_date(item.get("endDate")),
+            cfp_status="Unknown",
+            event_format="In person",
+            source=ApifyDirectoryProvider.name,
+            source_url=source_url,
+            evidence=list(dict.fromkeys(filter(None, (source_url, url)))),
+        )
+
+    @staticmethod
+    def _merge_page(directory: Conference, page: Conference | None) -> Conference:
+        if page is None:
+            return directory
+        directory.description = directory.description or page.description
+        directory.location = directory.location or page.location
+        directory.event_date = directory.event_date or page.event_date
+        directory.event_end_date = directory.event_end_date or page.event_end_date
+        directory.cfp_status = page.cfp_status
+        directory.cfp_deadline = page.cfp_deadline
+        directory.submission_url = page.submission_url
+        directory.contact_email = page.contact_email
+        directory.event_format = page.event_format
+        directory.evidence = list(dict.fromkeys([*directory.evidence, *page.evidence]))
+        return directory
+
+    def discover(self, options: SearchOptions) -> list[Conference]:
+        if not self.configured:
+            return []
+        keywords = list(options.keywords[: max(1, self.settings.apify_max_keywords)])
+        charge = max(0.01, self.settings.apify_max_charge_usd) / len(keywords)
+        raw_items: list[dict[str, Any]] = []
+        failures: list[str] = []
+        with ThreadPoolExecutor(max_workers=len(keywords)) as executor:
+            futures = {
+                executor.submit(self._run_actor, self._input(keyword, options), charge): keyword
+                for keyword in keywords
+            }
+            for future in as_completed(futures):
+                try:
+                    raw_items.extend(future.result())
+                except Exception as exc:
+                    failures.append(f"{futures[future]}: {exc}")
+        normalized = [value for item in raw_items if (value := self._normalize(item))]
+        candidates = normalized[: max(1, self.settings.discovery_max_pages)]
+        results: list[Conference] = []
+        with ThreadPoolExecutor(
+            max_workers=max(1, min(self.settings.discovery_max_concurrent, len(candidates) or 1))
+        ) as executor:
+            pages = {
+                executor.submit(scrape_conference, candidate.url, self.name): candidate
+                for candidate in candidates
+            }
+            for future in as_completed(pages):
+                results.append(self._merge_page(pages[future], future.result()))
+        if failures and not results:
+            raise RuntimeError("; ".join(failures)[:500])
+        if failures:
+            logger.warning("Some Apify keyword runs failed: %s", "; ".join(failures))
+        return results
+
+
 class SerperProvider:
     name = "serper"
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("SERPER_API_KEY", "")
+        self.configured = bool(self.api_key)
 
     def discover(self, options: SearchOptions) -> list[Conference]:
         if not self.api_key:

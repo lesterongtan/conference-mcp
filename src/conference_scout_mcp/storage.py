@@ -147,12 +147,20 @@ provider_slots = Table(
     Column("lease_until", DateTime(timezone=True)),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
+worker_heartbeats = Table(
+    "worker_heartbeats",
+    metadata,
+    Column("worker_id", String(100), primary_key=True),
+    Column("capabilities_json", Text, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
 Index("searches_customer_created_idx", searches.c.customer_id, searches.c.created_at)
 Index("searches_claim_idx", searches.c.status, searches.c.lease_until)
 Index("conferences_customer_search_idx", conferences.c.customer_id, conferences.c.search_id)
 Index("enrichment_claim_idx", enrichment_jobs.c.status, enrichment_jobs.c.lease_until)
 Index("attempts_result_idx", provider_attempts.c.customer_id, provider_attempts.c.result_id)
 Index("usage_customer_created_idx", usage_events.c.customer_id, usage_events.c.created_at)
+Index("worker_heartbeats_updated_idx", worker_heartbeats.c.updated_at)
 
 
 def _now() -> datetime:
@@ -366,6 +374,60 @@ class SearchStore:
                 )
                 .values(lease_owner=None, lease_until=None, updated_at=_now())
             )
+
+    def record_worker_heartbeat(self, worker_id: str, capabilities: dict[str, Any]) -> None:
+        now = _now()
+        with self.engine.begin() as connection:
+            connection.execute(
+                delete(worker_heartbeats).where(worker_heartbeats.c.worker_id == worker_id)
+            )
+            connection.execute(
+                insert(worker_heartbeats).values(
+                    worker_id=worker_id,
+                    capabilities_json=_json(capabilities),
+                    updated_at=now,
+                )
+            )
+            connection.execute(
+                delete(worker_heartbeats).where(
+                    worker_heartbeats.c.updated_at < now - timedelta(days=7)
+                )
+            )
+
+    def get_worker_provider_status(self, active_seconds: int = 180) -> dict[str, Any]:
+        cutoff = _now() - timedelta(seconds=max(30, active_seconds))
+        with self.engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    select(worker_heartbeats).order_by(worker_heartbeats.c.updated_at.desc())
+                )
+                .mappings()
+                .all()
+            )
+        workers: list[dict[str, Any]] = []
+        aggregate: dict[str, bool] = {}
+        for row in rows:
+            capabilities = json.loads(row["capabilities_json"])
+            updated_at = row["updated_at"]
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=UTC)
+            active = updated_at >= cutoff
+            workers.append(
+                {
+                    "active": active,
+                    "updated_at": updated_at.isoformat(),
+                    "capabilities": capabilities,
+                }
+            )
+            if active:
+                for group in ("discovery", "enrichment"):
+                    for provider, configured in capabilities.get(group, {}).items():
+                        aggregate[provider] = aggregate.get(provider, False) or bool(configured)
+        return {
+            "active_workers": sum(1 for worker in workers if worker["active"]),
+            "providers": aggregate,
+            "workers": workers,
+        }
 
     def defer_enrichment(self, job_id: str, customer_id: str, worker_id: str) -> None:
         with self.engine.begin() as connection:
